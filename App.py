@@ -26,8 +26,14 @@ coord_df = pd.DataFrame(columns=["numar", "x", "y"])
 if uploaded_coords:
     if uploaded_coords.name.endswith(".csv"):
         coord_df = pd.read_csv(uploaded_coords)
+        # Normalizează coloane și convertește la numere
+        coord_df.columns = coord_df.columns.str.lower().str.strip()
         if "nr" in coord_df.columns:
             coord_df.rename(columns={"nr": "numar"}, inplace=True)
+        coord_df["numar"] = pd.to_numeric(coord_df["numar"], errors="coerce")
+        coord_df["x"] = pd.to_numeric(coord_df["x"], errors="coerce")
+        coord_df["y"] = pd.to_numeric(coord_df["y"], errors="coerce")
+        coord_df = coord_df.dropna()
         st.success(f"Au fost încărcate {len(coord_df)} coordonate din CSV.")
     elif uploaded_coords.name.endswith(".json"):
         data = json.load(uploaded_coords)
@@ -40,7 +46,13 @@ if uploaded_coords:
             coords = []
         if coords:
             coord_df = pd.DataFrame(coords)
-            coord_df.rename(columns={"nr": "numar"}, inplace=True)
+            coord_df.columns = coord_df.columns.str.lower().str.strip()
+            if "nr" in coord_df.columns:
+                coord_df.rename(columns={"nr": "numar"}, inplace=True)
+            coord_df["numar"] = pd.to_numeric(coord_df["numar"], errors="coerce")
+            coord_df["x"] = pd.to_numeric(coord_df["x"], errors="coerce")
+            coord_df["y"] = pd.to_numeric(coord_df["y"], errors="coerce")
+            coord_df = coord_df.dropna()
             st.success(f"Au fost încărcate {len(coord_df)} coordonate din JSON.")
 else:
     manual_coords = st.text_area(
@@ -49,16 +61,25 @@ else:
     )
     if manual_coords.strip():
         coord_df = pd.read_csv(io.StringIO(manual_coords), names=["numar", "x", "y"])
+        coord_df["numar"] = pd.to_numeric(coord_df["numar"], errors="coerce")
+        coord_df["x"] = pd.to_numeric(coord_df["x"], errors="coerce")
+        coord_df["y"] = pd.to_numeric(coord_df["y"], errors="coerce")
+        coord_df = coord_df.dropna()
 
 if not coord_df.empty:
-    st.dataframe(coord_df.head())
+    st.dataframe(coord_df.head(10))
 
 # --- Secțiunea 2: Variante ---
 st.header("2️⃣ Variante")
 
 uploaded_variants = st.file_uploader("📂 Încarcă fișierul CSV cu variante", type=["csv"])
+variants_df = pd.DataFrame(columns=["id", "combinatie"])
+
 if uploaded_variants:
     variants_df = pd.read_csv(uploaded_variants)
+    variants_df.columns = variants_df.columns.str.lower().str.strip()
+    if "combinație" in variants_df.columns:
+        variants_df.rename(columns={"combinație": "combinatie"}, inplace=True)
     st.success(f"Au fost încărcate {len(variants_df)} variante.")
 else:
     manual_variants = st.text_area(
@@ -66,12 +87,10 @@ else:
         placeholder="1,1 2 3 4\n2,2 3 4 5"
     )
     if manual_variants.strip():
-        variants_df = pd.read_csv(io.StringIO(manual_variants), names=["id", "combinație"])
-    else:
-        variants_df = pd.DataFrame(columns=["id", "combinație"])
+        variants_df = pd.read_csv(io.StringIO(manual_variants), names=["id", "combinatie"])
 
 if not variants_df.empty:
-    st.dataframe(variants_df.head())
+    st.dataframe(variants_df.head(10))
 
 # --- Secțiunea 3: Generare ---
 st.header("3️⃣ Generare coordonate, vizualizare și export")
@@ -81,11 +100,11 @@ if not coord_df.empty and not variants_df.empty:
 
     results = []
     for _, row in variants_df.iterrows():
-        combo_nums = str(row["combinație"]).split()
+        combo_nums = str(row["combinatie"]).split()
         coords = []
         for num in combo_nums:
             try:
-                n = int(num)
+                n = int(float(num))
                 if n in coord_map:
                     coords.append(coord_map[n])
                 else:
@@ -94,7 +113,7 @@ if not coord_df.empty and not variants_df.empty:
                 coords.append({"x": None, "y": None})
         results.append({
             "id": row["id"],
-            "combinație": row["combinație"],
+            "combinatie": row["combinatie"],
             "coordonate": coords
         })
 
@@ -112,13 +131,14 @@ if not coord_df.empty and not variants_df.empty:
     ys = [c["y"] for c in coords_list if c["y"] is not None]
 
     if xs and ys:
-        fig, ax = plt.subplots()
-        ax.scatter(xs, ys)
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.scatter(xs, ys, s=100, alpha=0.6)
         for i, (x, y) in enumerate(zip(xs, ys)):
             ax.text(x, y, str(i + 1), fontsize=9, ha='right')
         ax.set_xlabel("X")
         ax.set_ylabel("Y")
         ax.set_title(f"Varianța {variant_select}")
+        ax.grid(True, alpha=0.3)
         st.pyplot(fig)
     else:
         st.warning("Nu există coordonate valide.")
@@ -137,8 +157,19 @@ if not coord_df.empty and not variants_df.empty:
     lua_output = "local variants = {\n"
     for idx, row in result_df.iterrows():
         lua_output += f"    -- Varianta {row['id']}\n    {{"
-        coords_str = ", ".join([f"{{x={c['x']}, y={c['y']}}}" for c in row["coordonate"]])
-        lua_output += coords_str + "},\n"
+        coords = [f"{{x={int(c['x'])}, y={int(c['y'])}}}" for c in row["coordonate"] if c['x'] is not None]
+        
+        # Grupează coordonatele pe mai multe rânduri (4 pe rând)
+        for i in range(0, len(coords), 4):
+            group = ", ".join(coords[i:i+4])
+            if i == 0:
+                lua_output += group
+            else:
+                lua_output += ", " + group
+            if i + 4 < len(coords):
+                lua_output += ",\n"
+        
+        lua_output += "}},\n"
     lua_output += "}\n"
 
     st.download_button(
